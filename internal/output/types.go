@@ -3,9 +3,9 @@ package output
 
 import (
 	"fmt"
+	"github.com/valpere/tile_to_json/internal/tile"
 	"io"
 	"time"
-	"github.com/valpere/tile_to_json/internal/tile"
 )
 
 // Format represents different output formats supported by the application

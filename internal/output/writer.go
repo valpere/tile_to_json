@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/valpere/tile_to_json/internal/tile"
 )
@@ -169,14 +168,14 @@ func NewMultiFileWriter(config *WriterConfig, baseDir string) (*MultiFileWriter,
 // Write writes a single tile to its own file
 func (w *MultiFileWriter) Write(tile *tile.ProcessedTile) error {
 	filename := w.generateFilename(tile.Coordinate)
-	filepath := filepath.Join(w.baseDir, filename)
+	filePath := filepath.Join(w.baseDir, filename)
 
 	// Ensure subdirectory exists
-	if err := os.MkdirAll(filepath.Dir(filepath), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(filePath), 0755); err != nil {
 		return fmt.Errorf("failed to create subdirectory: %w", err)
 	}
 
-	dest, err := newFileDestination(filepath, w.config.Compression)
+	dest, err := newFileDestination(filePath, w.config.Compression)
 	if err != nil {
 		return fmt.Errorf("failed to create file destination: %w", err)
 	}

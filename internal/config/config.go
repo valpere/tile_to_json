@@ -12,13 +12,15 @@ import (
 // Config represents the complete application configuration
 type Config struct {
 	Server  ServerConfig  `mapstructure:"server"`
+	Local   LocalConfig   `mapstructure:"local"`
+	Source  SourceConfig  `mapstructure:"source"`
 	Output  OutputConfig  `mapstructure:"output"`
 	Batch   BatchConfig   `mapstructure:"batch"`
 	Network NetworkConfig `mapstructure:"network"`
 	Logging LoggingConfig `mapstructure:"logging"`
 }
 
-// ServerConfig contains tile server configuration
+// ServerConfig contains tile server configuration for HTTP sources
 type ServerConfig struct {
 	BaseURL     string            `mapstructure:"base_url"`
 	APIKey      string            `mapstructure:"api_key"`
@@ -26,6 +28,21 @@ type ServerConfig struct {
 	Timeout     time.Duration     `mapstructure:"timeout"`
 	MaxRetries  int               `mapstructure:"max_retries"`
 	URLTemplate string            `mapstructure:"url_template"`
+}
+
+// LocalConfig contains configuration for local file processing
+type LocalConfig struct {
+	BasePath     string `mapstructure:"base_path"`
+	PathTemplate string `mapstructure:"path_template"`
+	Extension    string `mapstructure:"extension"`
+	Compressed   bool   `mapstructure:"compressed"`
+}
+
+// SourceConfig determines the data source type and behavior
+type SourceConfig struct {
+	Type        string `mapstructure:"type"`
+	DefaultType string `mapstructure:"default_type"`
+	AutoDetect  bool   `mapstructure:"auto_detect"`
 }
 
 // OutputConfig contains output formatting configuration
@@ -85,10 +102,20 @@ func Load() (*Config, error) {
 
 // setDefaults configures default values for all configuration options
 func setDefaults() {
+	// Source defaults
+	viper.SetDefault("source.type", "auto")
+	viper.SetDefault("source.default_type", "http")
+	viper.SetDefault("source.auto_detect", true)
+
 	// Server defaults
 	viper.SetDefault("server.timeout", 30*time.Second)
 	viper.SetDefault("server.max_retries", 3)
 	viper.SetDefault("server.url_template", "{base_url}/{z}/{x}/{y}.mvt")
+
+	// Local file defaults
+	viper.SetDefault("local.path_template", "{base_path}/{z}/{x}/{y}.mvt")
+	viper.SetDefault("local.extension", ".mvt")
+	viper.SetDefault("local.compressed", false)
 
 	// Output defaults
 	viper.SetDefault("output.format", "geojson")
@@ -120,24 +147,61 @@ func setDefaults() {
 
 // ToApplicationConfig converts Config to internal.ApplicationConfig
 func (c *Config) ToApplicationConfig() *internal.ApplicationConfig {
+	sourceType := internal.SourceTypeHTTP
+	if c.Source.Type == "local" {
+		sourceType = internal.SourceTypeLocal
+	}
+
 	return &internal.ApplicationConfig{
 		LogLevel:       c.Logging.Level,
 		MaxConcurrency: c.Batch.Concurrency,
 		RequestTimeout: c.Server.Timeout,
 		RetryAttempts:  c.Server.MaxRetries,
 		RetryDelay:     time.Second,
+		SourceType:     sourceType,
 	}
 }
 
-// GetTileURL builds a tile URL using the configured template
+// GetTileURL builds a tile URL using the configured template for HTTP sources
 func (c *Config) GetTileURL(z, x, y int) string {
-	url := c.Server.URLTemplate
-	url = viper.GetString("server.base_url") + "/" + fmt.Sprintf("%d/%d/%d.mvt", z, x, y)
-	
 	if c.Server.BaseURL != "" {
-		// Simple template replacement for now
 		return fmt.Sprintf("%s/%d/%d/%d.mvt", c.Server.BaseURL, z, x, y)
 	}
-	
-	return url
+	return ""
+}
+
+// GetTilePath builds a local file path using the configured template for local sources
+func (c *Config) GetTilePath(z, x, y int) string {
+	if c.Local.BasePath != "" {
+		extension := c.Local.Extension
+		if c.Local.Compressed {
+			extension += ".gz"
+		}
+		return fmt.Sprintf("%s/%d/%d/%d%s", c.Local.BasePath, z, x, y, extension)
+	}
+	return ""
+}
+
+// DetermineSourceType automatically determines the source type based on configuration
+func (c *Config) DetermineSourceType() internal.SourceType {
+	if !c.Source.AutoDetect {
+		if c.Source.Type == "local" {
+			return internal.SourceTypeLocal
+		}
+		return internal.SourceTypeHTTP
+	}
+
+	// Auto-detection logic
+	if c.Local.BasePath != "" && c.Server.BaseURL == "" {
+		return internal.SourceTypeLocal
+	}
+	if c.Server.BaseURL != "" && c.Local.BasePath == "" {
+		return internal.SourceTypeHTTP
+	}
+
+	// Default to configured default type
+	if c.Source.DefaultType == "local" {
+		return internal.SourceTypeLocal
+	}
+	return internal.SourceTypeHTTP
 }

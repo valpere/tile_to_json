@@ -60,7 +60,7 @@ func (bp *BatchProcessor) Process(ctx context.Context, job *Job) error {
 
 	// Process work items in chunks
 	chunkResults := make([]*ChunkResult, 0, job.Progress.TotalChunks)
-	
+
 	for chunkStart := 0; chunkStart < len(workItems); chunkStart += job.Config.ChunkSize {
 		select {
 		case <-ctx.Done():
@@ -106,7 +106,7 @@ func (bp *BatchProcessor) Process(ctx context.Context, job *Job) error {
 
 	// Complete job successfully
 	bp.completeJobSuccessfully(job)
-	
+
 	if bp.reporter != nil {
 		bp.reporter.ReportJobComplete(job)
 	}
@@ -117,7 +117,7 @@ func (bp *BatchProcessor) Process(ctx context.Context, job *Job) error {
 // ProcessChunk processes a chunk of work items concurrently
 func (bp *BatchProcessor) ProcessChunk(ctx context.Context, workItems []*WorkItem) (*ChunkResult, error) {
 	start := time.Now()
-	
+
 	workChan := make(chan *WorkItem, len(workItems))
 	resultChan := make(chan *WorkResult, len(workItems))
 
@@ -130,7 +130,7 @@ func (bp *BatchProcessor) ProcessChunk(ctx context.Context, workItems []*WorkIte
 	// Start worker goroutines
 	var wg sync.WaitGroup
 	concurrency := min(len(workItems), 10) // Limit concurrency for chunk processing
-	
+
 	for i := 0; i < concurrency; i++ {
 		wg.Add(1)
 		go func() {
@@ -152,7 +152,7 @@ func (bp *BatchProcessor) ProcessChunk(ctx context.Context, workItems []*WorkIte
 
 	for result := range resultChan {
 		results = append(results, result)
-		
+
 		if result.Error != nil {
 			failureCount++
 		} else {
@@ -279,10 +279,11 @@ func (bp *BatchProcessor) generateWorkItems(tileRanges []*tile.TileRange, config
 	return workItems, nil
 }
 
-// buildTileURL constructs a tile URL from coordinates
+// buildTileURL constructs a tile URL from coordinates based on source type
 func (bp *BatchProcessor) buildTileURL(z, x, y int) string {
-	// This should come from configuration
-	return fmt.Sprintf("https://example.com/tiles/%d/%d/%d.mvt", z, x, y)
+	// This will be configured through the fetcher factory
+	// For now, return empty string as the fetcher will handle URL/path construction
+	return ""
 }
 
 // updateJobProgress updates job progress based on chunk results
@@ -294,7 +295,7 @@ func (bp *BatchProcessor) updateJobProgress(job *Job, chunkResult *ChunkResult) 
 	job.Progress.SuccessTiles += int64(chunkResult.SuccessCount)
 	job.Progress.FailedTiles += int64(chunkResult.FailureCount)
 	job.Progress.UpdateThroughput()
-	
+
 	estimatedEnd := job.Progress.EstimateCompletion()
 	job.Progress.EstimatedEnd = &estimatedEnd
 }

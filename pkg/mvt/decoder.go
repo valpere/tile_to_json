@@ -6,7 +6,6 @@ import (
 
 	"github.com/paulmach/orb"
 	"github.com/paulmach/orb/encoding/mvt"
-	"github.com/paulmach/orb/geojson"
 )
 
 // Decoder handles decoding of Mapbox Vector Tiles from Protocol Buffer format
@@ -30,28 +29,26 @@ func NewDecoderWithExtent(extent int) *Decoder {
 
 // DecodedTile represents a decoded MVT tile with its layers and metadata
 type DecodedTile struct {
-	Layers   map[string]*DecodedLayer `json:"layers"`
-	Extent   int                      `json:"extent"`
-	Version  int                      `json:"version"`
-	TileID   TileID                   `json:"tile_id"`
+	Layers  map[string]*DecodedLayer `json:"layers"`
+	Extent  int                      `json:"extent"`
+	Version int                      `json:"version"`
+	TileID  TileID                   `json:"tile_id"`
 }
 
 // DecodedLayer represents a single layer within an MVT tile
 type DecodedLayer struct {
-	Name     string              `json:"name"`
-	Features []*DecodedFeature   `json:"features"`
-	Extent   int                 `json:"extent"`
-	Version  int                 `json:"version"`
-	Keys     []string            `json:"keys,omitempty"`
-	Values   []interface{}       `json:"values,omitempty"`
+	Name     string            `json:"name"`
+	Features []*DecodedFeature `json:"features"`
+	Extent   int               `json:"extent"`
+	Version  int               `json:"version"`
 }
 
 // DecodedFeature represents a single feature within a layer
 type DecodedFeature struct {
-	ID         *uint64                `json:"id,omitempty"`
-	Tags       map[string]interface{} `json:"tags"`
-	Type       geojson.GeometryType   `json:"type"`
-	Geometry   orb.Geometry           `json:"geometry"`
+	ID       interface{}            `json:"id,omitempty"`
+	Tags     map[string]interface{} `json:"tags"`
+	Type     string                 `json:"type"`
+	Geometry orb.Geometry           `json:"geometry"`
 }
 
 // TileID represents the tile coordinates and zoom level
@@ -67,7 +64,7 @@ func (d *Decoder) Decode(data []byte, z, x, y int) (*DecodedTile, error) {
 		return nil, fmt.Errorf("empty tile data")
 	}
 
-	// Parse the MVT data using the orb library
+	// Use orb library to unmarshal MVT data
 	layers, err := mvt.Unmarshal(data)
 	if err != nil {
 		return nil, fmt.Errorf("failed to unmarshal MVT data: %w", err)
@@ -77,7 +74,7 @@ func (d *Decoder) Decode(data []byte, z, x, y int) (*DecodedTile, error) {
 	decodedTile := &DecodedTile{
 		Layers:  make(map[string]*DecodedLayer),
 		Extent:  d.extent,
-		Version: 2, // MVT specification version
+		Version: 2,
 		TileID: TileID{
 			Z: z,
 			X: x,
@@ -85,111 +82,117 @@ func (d *Decoder) Decode(data []byte, z, x, y int) (*DecodedTile, error) {
 		},
 	}
 
-	// Process each layer
-	for layerName, layer := range layers {
-		decodedLayer, err := d.decodeLayer(layerName, layer, z, x, y)
-		if err != nil {
-			return nil, fmt.Errorf("failed to decode layer %s: %w", layerName, err)
+	// Process each layer - layers is mvt.Layers which can be ranged over
+	for _, layer := range layers {
+		decodedLayer := &DecodedLayer{
+			Name:     layer.Name,
+			Features: make([]*DecodedFeature, 0, len(layer.Features)),
+			Extent:   int(layer.Extent),
+			Version:  int(layer.Version),
 		}
-		decodedTile.Layers[layerName] = decodedLayer
+
+		// Process each feature - layer.Features is []*geojson.Feature
+		for _, feature := range layer.Features {
+			decodedFeature := &DecodedFeature{
+				ID:       feature.ID,
+				Tags:     feature.Properties,
+				Geometry: d.transformGeometry(feature.Geometry, z, x, y),
+			}
+
+			// Determine geometry type
+			switch feature.Geometry.(type) {
+			case orb.Point:
+				decodedFeature.Type = "Point"
+			case orb.MultiPoint:
+				decodedFeature.Type = "MultiPoint"
+			case orb.LineString:
+				decodedFeature.Type = "LineString"
+			case orb.MultiLineString:
+				decodedFeature.Type = "MultiLineString"
+			case orb.Polygon:
+				decodedFeature.Type = "Polygon"
+			case orb.MultiPolygon:
+				decodedFeature.Type = "MultiPolygon"
+			default:
+				decodedFeature.Type = "Unknown"
+			}
+
+			decodedLayer.Features = append(decodedLayer.Features, decodedFeature)
+		}
+
+		decodedTile.Layers[layer.Name] = decodedLayer
 	}
 
 	return decodedTile, nil
 }
 
-// decodeLayer processes a single layer from the MVT data
-func (d *Decoder) decodeLayer(layerName string, layer *mvt.Layer, z, x, y int) (*DecodedLayer, error) {
-	decodedLayer := &DecodedLayer{
-		Name:     layerName,
-		Features: make([]*DecodedFeature, 0, len(layer.Features)),
-		Extent:   int(layer.Extent),
-		Version:  int(layer.Version),
-	}
-
-	// Process each feature in the layer
-	for _, feature := range layer.Features {
-		decodedFeature, err := d.decodeFeature(feature, z, x, y)
-		if err != nil {
-			// Log the error but continue processing other features
-			continue
-		}
-		decodedLayer.Features = append(decodedLayer.Features, decodedFeature)
-	}
-
-	return decodedLayer, nil
-}
-
-// decodeFeature processes a single feature from the layer
-func (d *Decoder) decodeFeature(feature *mvt.Feature, z, x, y int) (*DecodedFeature, error) {
-	// Convert the feature geometry to geographic coordinates
-	geometry := feature.Geometry
-	if geometry == nil {
-		return nil, fmt.Errorf("feature has no geometry")
-	}
-
-	// Transform tile coordinates to geographic coordinates
-	transformedGeometry := d.transformGeometry(geometry, z, x, y)
-
-	decodedFeature := &DecodedFeature{
-		Tags:     feature.Tags,
-		Geometry: transformedGeometry,
-	}
-
-	// Set feature ID if present
-	if feature.ID != nil {
-		decodedFeature.ID = feature.ID
-	}
-
-	// Determine geometry type
-	switch transformedGeometry.(type) {
-	case orb.Point:
-		decodedFeature.Type = geojson.TypePoint
-	case orb.MultiPoint:
-		decodedFeature.Type = geojson.TypeMultiPoint
-	case orb.LineString:
-		decodedFeature.Type = geojson.TypeLineString
-	case orb.MultiLineString:
-		decodedFeature.Type = geojson.TypeMultiLineString
-	case orb.Polygon:
-		decodedFeature.Type = geojson.TypePolygon
-	case orb.MultiPolygon:
-		decodedFeature.Type = geojson.TypeMultiPolygon
-	default:
-		return nil, fmt.Errorf("unsupported geometry type: %T", transformedGeometry)
-	}
-
-	return decodedFeature, nil
-}
-
-// transformGeometry converts tile coordinates to geographic coordinates (Web Mercator)
+// transformGeometry converts tile coordinates to geographic coordinates
 func (d *Decoder) transformGeometry(geometry orb.Geometry, z, x, y int) orb.Geometry {
-	// Calculate the transformation parameters
-	n := float64(1 << uint(z))
+	numTiles := 1 << uint(z)
+	n := float64(numTiles)
 	tileSize := float64(d.extent)
-	
-	// Web Mercator bounds
 	const webMercatorMax = 20037508.342789244
 
 	transform := func(point orb.Point) orb.Point {
-		// Convert tile pixel coordinates to tile fractional coordinates
 		tileX := point[0] / tileSize
 		tileY := point[1] / tileSize
-		
-		// Convert to global tile coordinates
 		globalX := (float64(x) + tileX) / n
 		globalY := (float64(y) + tileY) / n
-		
-		// Convert to Web Mercator coordinates
-		mercatorX := (globalX * 2.0 - 1.0) * webMercatorMax
-		mercatorY := (1.0 - globalY * 2.0) * webMercatorMax
-		
+		mercatorX := (globalX*2.0 - 1.0) * webMercatorMax
+		mercatorY := (1.0 - globalY*2.0) * webMercatorMax
 		return orb.Point{mercatorX, mercatorY}
 	}
 
-	return orb.Transform(geometry, transform)
+	return transformGeometry(geometry, transform)
 }
 
-// GetLayerNames returns the names of all layers in the decoded tile
+// transformGeometry applies transformation to geometry
+func transformGeometry(geom orb.Geometry, transform func(orb.Point) orb.Point) orb.Geometry {
+	switch g := geom.(type) {
+	case orb.Point:
+		return transform(g)
+	case orb.MultiPoint:
+		result := make(orb.MultiPoint, len(g))
+		for i, point := range g {
+			result[i] = transform(point)
+		}
+		return result
+	case orb.LineString:
+		result := make(orb.LineString, len(g))
+		for i, point := range g {
+			result[i] = transform(point)
+		}
+		return result
+	case orb.MultiLineString:
+		result := make(orb.MultiLineString, len(g))
+		for i, lineString := range g {
+			result[i] = transformGeometry(lineString, transform).(orb.LineString)
+		}
+		return result
+	case orb.Ring:
+		result := make(orb.Ring, len(g))
+		for i, point := range g {
+			result[i] = transform(point)
+		}
+		return result
+	case orb.Polygon:
+		result := make(orb.Polygon, len(g))
+		for i, ring := range g {
+			result[i] = transformGeometry(ring, transform).(orb.Ring)
+		}
+		return result
+	case orb.MultiPolygon:
+		result := make(orb.MultiPolygon, len(g))
+		for i, polygon := range g {
+			result[i] = transformGeometry(polygon, transform).(orb.Polygon)
+		}
+		return result
+	default:
+		return geom
+	}
+}
+
+// GetLayerNames returns layer names
 func (dt *DecodedTile) GetLayerNames() []string {
 	names := make([]string, 0, len(dt.Layers))
 	for name := range dt.Layers {
@@ -198,7 +201,7 @@ func (dt *DecodedTile) GetLayerNames() []string {
 	return names
 }
 
-// GetFeatureCount returns the total number of features across all layers
+// GetFeatureCount returns total feature count
 func (dt *DecodedTile) GetFeatureCount() int {
 	count := 0
 	for _, layer := range dt.Layers {
@@ -207,7 +210,7 @@ func (dt *DecodedTile) GetFeatureCount() int {
 	return count
 }
 
-// GetLayerFeatureCount returns the number of features in a specific layer
+// GetLayerFeatureCount returns feature count for specific layer
 func (dt *DecodedTile) GetLayerFeatureCount(layerName string) int {
 	if layer, exists := dt.Layers[layerName]; exists {
 		return len(layer.Features)
@@ -215,36 +218,33 @@ func (dt *DecodedTile) GetLayerFeatureCount(layerName string) int {
 	return 0
 }
 
-// HasLayer checks if the tile contains a specific layer
+// HasLayer checks if layer exists
 func (dt *DecodedTile) HasLayer(layerName string) bool {
 	_, exists := dt.Layers[layerName]
 	return exists
 }
 
-// IsEmpty returns true if the tile contains no features
+// IsEmpty checks if tile has no features
 func (dt *DecodedTile) IsEmpty() bool {
 	return dt.GetFeatureCount() == 0
 }
 
-// String returns a string representation of the tile ID
+// String returns string representation of tile ID
 func (tid TileID) String() string {
 	return fmt.Sprintf("%d/%d/%d", tid.Z, tid.X, tid.Y)
 }
 
-// Validate checks if the tile coordinates are valid
+// Validate checks tile coordinate validity
 func (tid TileID) Validate() error {
 	if tid.Z < 0 || tid.Z > 22 {
 		return fmt.Errorf("invalid zoom level %d: must be between 0 and 22", tid.Z)
 	}
-
 	maxTile := 1 << uint(tid.Z)
 	if tid.X < 0 || tid.X >= maxTile {
 		return fmt.Errorf("invalid X coordinate %d for zoom %d: must be between 0 and %d", tid.X, tid.Z, maxTile-1)
 	}
-
 	if tid.Y < 0 || tid.Y >= maxTile {
 		return fmt.Errorf("invalid Y coordinate %d for zoom %d: must be between 0 and %d", tid.Y, tid.Z, maxTile-1)
 	}
-
 	return nil
 }

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"math"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -14,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
+	"github.com/valpere/tile_to_json/internal"
 	"github.com/valpere/tile_to_json/internal/batch"
 	"github.com/valpere/tile_to_json/internal/config"
 	"github.com/valpere/tile_to_json/internal/output"
@@ -26,22 +26,30 @@ var batchCmd = &cobra.Command{
 	Short: "Batch process multiple Mapbox Vector Tiles",
 	Long: `Batch process multiple Mapbox Vector Tiles from Protocol Buffer format to JSON/GeoJSON format.
 
-This command supports processing tile ranges defined by zoom levels and bounding boxes,
-or individual tile lists. It provides concurrent processing capabilities and comprehensive
-progress reporting for large-scale conversion operations.
+This command supports processing tile ranges from both remote servers and local file systems.
+It provides concurrent processing capabilities and comprehensive progress reporting for 
+large-scale conversion operations.
+
+Data Sources:
+- Remote tile servers via HTTP/HTTPS with URL patterns
+- Local tile directories with standard z/x/y organization
+- Mixed mode with automatic source detection
 
 Examples:
-  # Process tiles in a zoom range with bounding box
-  tile-to-json batch --min-zoom 10 --max-zoom 12 --bbox "-74.0,40.7,-73.9,40.8" --output-dir ./tiles/
+  # Process remote tiles in a zoom range with bounding box
+  tile-to-json batch --base-url "https://example.com/tiles" --min-zoom 10 --max-zoom 12 --bbox "-74.0,40.7,-73.9,40.8" --output-dir ./tiles/
 
-  # Process specific zoom level with full extent
-  tile-to-json batch --zoom 14 --output-dir ./tiles/
+  # Process local tiles in a directory
+  tile-to-json batch --base-path "/path/to/tiles" --min-zoom 10 --max-zoom 12 --bbox "-74.0,40.7,-73.9,40.8" --output-dir ./output/
 
-  # Process with custom concurrency and chunk size
-  tile-to-json batch --min-zoom 10 --max-zoom 11 --bbox "-74.0,40.7,-73.9,40.8" --concurrency 20 --chunk-size 50 --output-dir ./tiles/
+  # Process specific zoom level with full extent (remote)
+  tile-to-json batch --base-url "https://example.com/tiles" --zoom 14 --output-dir ./tiles/
+
+  # Process local tiles with custom concurrency and chunk size
+  tile-to-json batch --base-path "/path/to/tiles" --min-zoom 10 --max-zoom 11 --bbox "-74.0,40.7,-73.9,40.8" --concurrency 20 --chunk-size 50 --output-dir ./output/
 
   # Process to single file with compression
-  tile-to-json batch --zoom 10 --bbox "-74.0,40.7,-73.9,40.8" --output tiles.geojson.gz --single-file
+  tile-to-json batch --base-path "/path/to/tiles" --zoom 10 --bbox "-74.0,40.7,-73.9,40.8" --output tiles.geojson.gz --single-file
 
   # Resume failed batch job
   tile-to-json batch --resume --job-id previous-job-id`,
@@ -57,6 +65,9 @@ func init() {
 	batchCmd.Flags().Int("max-zoom", 0, "maximum zoom level")
 	batchCmd.Flags().String("bbox", "", "bounding box: 'min_lon,min_lat,max_lon,max_lat'")
 	batchCmd.Flags().String("tiles", "", "specific tiles list: 'z/x/y,z/x/y,...'")
+
+	// Source override flags
+	batchCmd.Flags().String("source-type", "", "override source type (http, local)")
 
 	// Output flags
 	batchCmd.Flags().String("output-dir", "./output", "output directory for tiles")
@@ -94,6 +105,7 @@ func runBatch(cmd *cobra.Command, args []string) error {
 	maxZoom, _ := cmd.Flags().GetInt("max-zoom")
 	bboxStr, _ := cmd.Flags().GetString("bbox")
 	tilesStr, _ := cmd.Flags().GetString("tiles")
+	sourceTypeOverride, _ := cmd.Flags().GetString("source-type")
 	outputDir, _ := cmd.Flags().GetString("output-dir")
 	outputFile, _ := cmd.Flags().GetString("output")
 	singleFile, _ := cmd.Flags().GetBool("single-file")
@@ -104,18 +116,34 @@ func runBatch(cmd *cobra.Command, args []string) error {
 	jobID, _ := cmd.Flags().GetString("job-id")
 	showProgress, _ := cmd.Flags().GetBool("progress")
 
-	// Validate base URL
-	if cfg.Server.BaseURL == "" {
-		return fmt.Errorf("base URL is required for batch processing")
+	// Override source type if specified
+	if sourceTypeOverride != "" {
+		switch sourceTypeOverride {
+		case "http":
+			cfg.Source.Type = "http"
+		case "local":
+			cfg.Source.Type = "local"
+		default:
+			return fmt.Errorf("invalid source type: %s (must be 'http' or 'local')", sourceTypeOverride)
+		}
 	}
 
-	// Parse tile ranges
-	var tileRanges []*tile.TileRange
+	// Determine and validate source type
+	sourceType := cfg.DetermineSourceType()
+	factory := tile.NewFetcherFactory(cfg)
+	
+	if err := factory.ValidateConfiguration(sourceType); err != nil {
+		return fmt.Errorf("source configuration validation failed: %w", err)
+	}
 
+	// Handle resume functionality
 	if resume && jobID != "" {
 		// TODO: Implement job resume logic
 		return fmt.Errorf("resume functionality not yet implemented")
 	}
+
+	// Parse tile ranges
+	var tileRanges []*tile.TileRange
 
 	if tilesStr != "" {
 		// Parse specific tiles list
@@ -158,6 +186,13 @@ func runBatch(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("no tiles to process")
 	}
 
+	// For local sources, validate that tiles exist
+	if sourceType == internal.SourceTypeLocal {
+		if err := validateLocalTileRanges(cfg, tileRanges); err != nil {
+			return fmt.Errorf("local tile validation failed: %w", err)
+		}
+	}
+
 	// Calculate total tiles
 	var totalTiles int64
 	for _, tr := range tileRanges {
@@ -166,6 +201,7 @@ func runBatch(cmd *cobra.Command, args []string) error {
 
 	if viper.GetBool("logging.verbose") {
 		fmt.Fprintf(os.Stderr, "Processing %d tiles across %d ranges\n", totalTiles, len(tileRanges))
+		fmt.Fprintf(os.Stderr, "Source type: %s\n", sourceType)
 	}
 
 	// Create job configuration
@@ -192,7 +228,11 @@ func runBatch(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create batch components
-	fetcher := tile.NewHTTPFetcher(cfg)
+	fetcher, err := factory.CreateFetcherForType(sourceType)
+	if err != nil {
+		return fmt.Errorf("failed to create fetcher: %w", err)
+	}
+
 	processor := tile.NewMVTProcessor()
 
 	// Create writer
@@ -247,6 +287,36 @@ func runBatch(cmd *cobra.Command, args []string) error {
 		fmt.Fprintf(os.Stderr, "Success: %d, Failed: %d\n", job.Progress.SuccessTiles, job.Progress.FailedTiles)
 		fmt.Fprintf(os.Stderr, "Duration: %v\n", elapsed)
 		fmt.Fprintf(os.Stderr, "Throughput: %.2f tiles/second\n", job.Progress.Throughput)
+		fmt.Fprintf(os.Stderr, "Source: %s\n", sourceType)
+	}
+
+	return nil
+}
+
+// validateLocalTileRanges validates that local tiles exist for the specified ranges
+func validateLocalTileRanges(cfg *config.Config, tileRanges []*tile.TileRange) error {
+	if cfg.DetermineSourceType() != internal.SourceTypeLocal {
+		return nil // Skip validation for non-local sources
+	}
+
+	localFetcher := tile.NewLocalFetcher(cfg)
+	sampleCount := 0
+	maxSamples := 10 // Validate a sample of tiles to avoid excessive checking
+
+	for _, tileRange := range tileRanges {
+		for z := tileRange.MinZ; z <= tileRange.MaxZ && sampleCount < maxSamples; z++ {
+			for x := tileRange.MinX; x <= tileRange.MaxX && sampleCount < maxSamples; x++ {
+				for y := tileRange.MinY; y <= tileRange.MaxY && sampleCount < maxSamples; y++ {
+					if err := localFetcher.ValidateTileExists(z, x, y); err != nil {
+						// If tile doesn't exist, warn but don't fail
+						if viper.GetBool("logging.verbose") {
+							fmt.Fprintf(os.Stderr, "Warning: tile %d/%d/%d not found locally\n", z, x, y)
+						}
+					}
+					sampleCount++
+				}
+			}
+		}
 	}
 
 	return nil

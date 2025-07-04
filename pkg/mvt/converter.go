@@ -4,9 +4,12 @@ package mvt
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"math"
 
+	"github.com/paulmach/orb"
 	"github.com/paulmach/orb/geojson"
+	"github.com/paulmach/orb/simplify"
 )
 
 // Converter handles conversion of Mapbox Vector Tiles to GeoJSON format
@@ -17,11 +20,11 @@ type Converter struct {
 
 // ConversionOptions configures the conversion process
 type ConversionOptions struct {
-	IncludeMetadata bool     `json:"include_metadata"`
-	LayerFilter     []string `json:"layer_filter,omitempty"`
-	PropertyFilter  []string `json:"property_filter,omitempty"`
-	SimplifyGeometry bool    `json:"simplify_geometry"`
-	CoordinateSystem string  `json:"coordinate_system"` // "web-mercator" or "wgs84"
+	IncludeMetadata  bool     `json:"include_metadata"`  // Include tile metadata in output
+	LayerFilter      []string `json:"layer_filter,omitempty"`      // Only include specified layers
+	PropertyFilter   []string `json:"property_filter,omitempty"`   // Only include specified properties
+	SimplifyGeometry bool     `json:"simplify_geometry"`           // Simplify geometries using Douglas-Peucker
+	CoordinateSystem string   `json:"coordinate_system"`           // "web-mercator" or "wgs84"
 }
 
 // ConversionMetadata contains metadata about the conversion process
@@ -33,24 +36,40 @@ type ConversionMetadata struct {
 	TileID       string   `json:"tile_id"`
 }
 
+// Coordinate system constants
+const (
+	CoordSystemWebMercator = "web-mercator"
+	CoordSystemWGS84       = "wgs84"
+)
+
 // NewConverter creates a new MVT to GeoJSON converter with default options
 func NewConverter() *Converter {
-	return &Converter{
-		decoder: NewDecoder(),
-		options: &ConversionOptions{
-			IncludeMetadata:  false,
-			SimplifyGeometry: false,
-			CoordinateSystem: "web-mercator",
-		},
+	options := &ConversionOptions{
+		IncludeMetadata:  false,
+		SimplifyGeometry: false,
+		CoordinateSystem: CoordSystemWebMercator,
 	}
-}
+	
+	if err := ValidateConversionOptions(options); err != nil {
+		log.Printf("Warning: invalid default options: %v", err)
+	}
 
-// NewConverterWithOptions creates a converter with custom options
-func NewConverterWithOptions(options *ConversionOptions) *Converter {
 	return &Converter{
 		decoder: NewDecoder(),
 		options: options,
 	}
+}
+
+// NewConverterWithOptions creates a converter with custom options
+func NewConverterWithOptions(options *ConversionOptions) (*Converter, error) {
+	if err := ValidateConversionOptions(options); err != nil {
+		return nil, fmt.Errorf("invalid conversion options: %w", err)
+	}
+
+	return &Converter{
+		decoder: NewDecoder(),
+		options: options,
+	}, nil
 }
 
 // Convert transforms MVT binary data to GeoJSON format
@@ -67,6 +86,8 @@ func (c *Converter) Convert(data []byte, z, x, y int) (map[string]interface{}, *
 		Features: make([]*geojson.Feature, 0),
 	}
 
+	var conversionErrors []error
+
 	// Process each layer
 	for layerName, layer := range decodedTile.Layers {
 		// Apply layer filter if specified
@@ -76,18 +97,37 @@ func (c *Converter) Convert(data []byte, z, x, y int) (map[string]interface{}, *
 
 		// Convert layer features to GeoJSON
 		for _, feature := range layer.Features {
+			// Skip features with nil geometry
+			if feature.Geometry == nil {
+				log.Printf("Warning: skipping feature with nil geometry in layer %s", layerName)
+				continue
+			}
+
 			geoJSONFeature, err := c.convertFeatureToGeoJSON(feature, layerName)
 			if err != nil {
-				// Log error but continue processing
+				conversionErrors = append(conversionErrors, fmt.Errorf("layer %s: %w", layerName, err))
 				continue
+			}
+
+			// Apply geometry simplification if enabled
+			if c.options.SimplifyGeometry && geoJSONFeature.Geometry != nil {
+				geoJSONFeature.Geometry = simplify.DouglasPeucker(1.0).Simplify(geoJSONFeature.Geometry)
 			}
 
 			featureCollection.Features = append(featureCollection.Features, geoJSONFeature)
 		}
 	}
 
+	// Log conversion errors for debugging
+	if len(conversionErrors) > 0 {
+		log.Printf("Conversion completed with %d errors", len(conversionErrors))
+		for _, err := range conversionErrors {
+			log.Printf("Conversion error: %v", err)
+		}
+	}
+
 	// Convert to coordinate system if specified
-	if c.options.CoordinateSystem == "wgs84" {
+	if c.options.CoordinateSystem == CoordSystemWGS84 {
 		c.transformToWGS84(featureCollection)
 	}
 
@@ -124,12 +164,12 @@ func (c *Converter) convertFeatureToGeoJSON(feature *DecodedFeature, layerName s
 
 	// Set feature ID if present
 	if feature.ID != nil {
-		geoJSONFeature.ID = *feature.ID
+		geoJSONFeature.ID = feature.ID
 	}
 
 	// Set properties
 	properties := make(map[string]interface{})
-	
+
 	// Copy feature tags to properties
 	for key, value := range feature.Tags {
 		// Apply property filter if specified
@@ -149,8 +189,6 @@ func (c *Converter) convertFeatureToGeoJSON(feature *DecodedFeature, layerName s
 
 // transformToWGS84 converts Web Mercator coordinates to WGS84 (longitude/latitude)
 func (c *Converter) transformToWGS84(featureCollection *geojson.FeatureCollection) {
-	const webMercatorMax = 20037508.342789244
-	
 	for _, feature := range featureCollection.Features {
 		if feature.Geometry != nil {
 			feature.Geometry = c.transformGeometryToWGS84(feature.Geometry)
@@ -159,75 +197,23 @@ func (c *Converter) transformToWGS84(featureCollection *geojson.FeatureCollectio
 }
 
 // transformGeometryToWGS84 transforms a single geometry from Web Mercator to WGS84
-func (c *Converter) transformGeometryToWGS84(geometry interface{}) interface{} {
-	// This is a simplified transformation - in production, you might want to use
-	// a proper projection library like proj4 for more accurate transformations
+func (c *Converter) transformGeometryToWGS84(geometry orb.Geometry) orb.Geometry {
 	const webMercatorMax = 20037508.342789244
-	
-	switch geom := geometry.(type) {
-	case map[string]interface{}:
-		if geomType, ok := geom["type"].(string); ok {
-			switch geomType {
-			case "Point":
-				if coords, ok := geom["coordinates"].([]interface{}); ok && len(coords) == 2 {
-					if x, ok := coords[0].(float64); ok {
-						if y, ok := coords[1].(float64); ok {
-							lon := (x / webMercatorMax) * 180.0
-							lat := (2.0 * (Math.Atan(Math.Exp((y / webMercatorMax) * Math.Pi)) - Math.Pi / 4.0)) * 180.0 / Math.Pi
-							geom["coordinates"] = []float64{lon, lat}
-						}
-					}
-				}
-			case "LineString", "MultiPoint":
-				if coords, ok := geom["coordinates"].([]interface{}); ok {
-					geom["coordinates"] = c.transformCoordinateArray(coords)
-				}
-			case "Polygon", "MultiLineString":
-				if coords, ok := geom["coordinates"].([]interface{}); ok {
-					for i, ring := range coords {
-						if ringArray, ok := ring.([]interface{}); ok {
-							coords[i] = c.transformCoordinateArray(ringArray)
-						}
-					}
-				}
-			case "MultiPolygon":
-				if coords, ok := geom["coordinates"].([]interface{}); ok {
-					for i, polygon := range coords {
-						if polygonArray, ok := polygon.([]interface{}); ok {
-							for j, ring := range polygonArray {
-								if ringArray, ok := ring.([]interface{}); ok {
-									polygonArray[j] = c.transformCoordinateArray(ringArray)
-								}
-							}
-						}
-					}
-				}
-			}
-		}
-	}
-	
-	return geometry
-}
 
-// transformCoordinateArray transforms an array of coordinates
-func (c *Converter) transformCoordinateArray(coords []interface{}) []interface{} {
-	const webMercatorMax = 20037508.342789244
-	
-	result := make([]interface{}, len(coords))
-	for i, coord := range coords {
-		if coordArray, ok := coord.([]interface{}); ok && len(coordArray) == 2 {
-			if x, ok := coordArray[0].(float64); ok {
-				if y, ok := coordArray[1].(float64); ok {
-					lon := (x / webMercatorMax) * 180.0
-					lat := (2.0 * (math.Atan(math.Exp((y / webMercatorMax) * math.Pi)) - math.Pi / 4.0)) * 180.0 / math.Pi
-					result[i] = []float64{lon, lat}
-					continue
-				}
-			}
-		}
-		result[i] = coord
+	transform := func(point orb.Point) orb.Point {
+		x, y := point[0], point[1]
+		
+		// Convert Web Mercator to WGS84 using correct formulas
+		lon := (x / webMercatorMax) * 180.0
+		
+		// Correct Web Mercator to latitude conversion
+		lat := y / webMercatorMax
+		lat = 180.0/math.Pi * (2*math.Atan(math.Exp(lat*math.Pi)) - math.Pi/2.0)
+		
+		return orb.Point{lon, lat}
 	}
-	return result
+
+	return applyGeometryTransform(geometry, transform)
 }
 
 // contains checks if a slice contains a specific string
@@ -253,7 +239,7 @@ func (c *Converter) ConvertToGeoJSONString(data []byte, z, x, y int, pretty bool
 	} else {
 		jsonData, err = json.Marshal(result)
 	}
-	
+
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal GeoJSON: %w", err)
 	}
@@ -263,8 +249,9 @@ func (c *Converter) ConvertToGeoJSONString(data []byte, z, x, y int, pretty bool
 
 // ValidateConversionOptions validates the conversion options
 func ValidateConversionOptions(options *ConversionOptions) error {
-	if options.CoordinateSystem != "web-mercator" && options.CoordinateSystem != "wgs84" {
-		return fmt.Errorf("invalid coordinate system: %s, must be 'web-mercator' or 'wgs84'", options.CoordinateSystem)
+	if options.CoordinateSystem != CoordSystemWebMercator && options.CoordinateSystem != CoordSystemWGS84 {
+		return fmt.Errorf("invalid coordinate system: %s, must be '%s' or '%s'", 
+			options.CoordinateSystem, CoordSystemWebMercator, CoordSystemWGS84)
 	}
 	return nil
 }

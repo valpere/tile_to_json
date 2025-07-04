@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/valpere/tile_to_json/internal"
+	"github.com/valpere/tile_to_json/internal/tile"
 )
 
 // DefaultCoordinator implements the Coordinator interface
@@ -23,7 +24,7 @@ type DefaultCoordinator struct {
 // NewDefaultCoordinator creates a new default batch coordinator
 func NewDefaultCoordinator(processor Processor, store JobStore) *DefaultCoordinator {
 	ctx, cancel := context.WithCancel(context.Background())
-	
+
 	return &DefaultCoordinator{
 		jobs:      make(map[string]*Job),
 		processor: processor,
