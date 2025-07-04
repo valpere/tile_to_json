@@ -1,18 +1,4 @@
-/*
-Copyright © 2025 Valentyn Solomko <valentyn.solomko@gmail.com>
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-*/
+// cmd/root.go - Root command implementation
 package cmd
 
 import (
@@ -27,17 +13,29 @@ var cfgFile string
 
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
-	Use:   "mvtpbf-to-geojson",
-	Short: "A brief description of your application",
-	Long: `A longer description that spans multiple lines and likely contains
-examples and usage of using your application. For example:
+	Use:   "tile-to-json",
+	Short: "Convert Mapbox Vector Tiles to JSON format",
+	Long: `TileToJson is a high-performance command-line tool for converting Mapbox Vector Tiles 
+from Protocol Buffer format to JSON/GeoJSON format. It supports both single tile 
+conversion and large-scale batch processing operations.
 
-Cobra is a CLI library for Go that empowers applications.
-This application is a tool to generate the needed files
-to quickly create a Cobra application.`,
-	// Uncomment the following line if your bare application
-	// has an action associated with it:
-	// Run: func(cmd *cobra.Command, args []string) { },
+Features:
+- Convert individual tiles or batch process tile ranges
+- Support for GeoJSON and custom JSON output formats
+- Concurrent processing for optimal performance
+- Comprehensive error handling and retry mechanisms
+- Configurable output destinations and compression
+
+Examples:
+  # Convert a single tile
+  tile-to-json convert --url "https://example.com/tiles/14/8362/5956.mvt" --output tile.geojson
+
+  # Batch process a range of tiles
+  tile-to-json batch --min-zoom 10 --max-zoom 12 --bbox "-74.0,40.7,-73.9,40.8" --output-dir ./tiles/
+
+  # Use configuration file
+  tile-to-json convert --config config.yaml --z 14 --x 8362 --y 5956`,
+	Version: "1.0.0",
 }
 
 // Execute adds all child commands to the root command and sets flags appropriately.
@@ -52,37 +50,53 @@ func Execute() {
 func init() {
 	cobra.OnInitialize(initConfig)
 
-	// Here you will define your flags and configuration settings.
-	// Cobra supports persistent flags, which, if defined here,
-	// will be global for your application.
+	// Global flags
+	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.tile-to-json.yaml)")
+	rootCmd.PersistentFlags().String("base-url", "", "base URL for tile server")
+	rootCmd.PersistentFlags().String("api-key", "", "API key for authentication")
+	rootCmd.PersistentFlags().StringP("format", "f", "geojson", "output format (geojson, json)")
+	rootCmd.PersistentFlags().Bool("pretty", true, "pretty print JSON output")
+	rootCmd.PersistentFlags().Bool("verbose", false, "verbose output")
+	rootCmd.PersistentFlags().Int("concurrency", 10, "number of concurrent requests")
+	rootCmd.PersistentFlags().Duration("timeout", 30*1000000000, "request timeout")
+	rootCmd.PersistentFlags().Int("retries", 3, "number of retry attempts")
 
-	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.mvtpbf-to-geojson.yaml)")
-
-	// Cobra also supports local flags, which will only run
-	// when this action is called directly.
-	rootCmd.Flags().BoolP("toggle", "t", false, "Help message for toggle")
+	// Bind flags to viper
+	viper.BindPFlag("server.base_url", rootCmd.PersistentFlags().Lookup("base-url"))
+	viper.BindPFlag("server.api_key", rootCmd.PersistentFlags().Lookup("api-key"))
+	viper.BindPFlag("output.format", rootCmd.PersistentFlags().Lookup("format"))
+	viper.BindPFlag("output.pretty", rootCmd.PersistentFlags().Lookup("pretty"))
+	viper.BindPFlag("logging.verbose", rootCmd.PersistentFlags().Lookup("verbose"))
+	viper.BindPFlag("batch.concurrency", rootCmd.PersistentFlags().Lookup("concurrency"))
+	viper.BindPFlag("server.timeout", rootCmd.PersistentFlags().Lookup("timeout"))
+	viper.BindPFlag("server.max_retries", rootCmd.PersistentFlags().Lookup("retries"))
 }
 
 // initConfig reads in config file and ENV variables if set.
 func initConfig() {
 	if cfgFile != "" {
-		// Use config file from the flag.
+		// Use config file from the flag
 		viper.SetConfigFile(cfgFile)
 	} else {
-		// Find home directory.
+		// Find home directory
 		home, err := os.UserHomeDir()
 		cobra.CheckErr(err)
 
-		// Search config in home directory with name ".mvtpbf-to-geojson" (without extension).
+		// Search config in home directory with name ".tile-to-json" (without extension)
 		viper.AddConfigPath(home)
+		viper.AddConfigPath(".")
 		viper.SetConfigType("yaml")
-		viper.SetConfigName(".mvtpbf-to-geojson")
+		viper.SetConfigName(".tile-to-json")
 	}
 
+	// Environment variables
+	viper.SetEnvPrefix("TILE_TO_JSON")
 	viper.AutomaticEnv() // read in environment variables that match
 
-	// If a config file is found, read it in.
+	// If a config file is found, read it in
 	if err := viper.ReadInConfig(); err == nil {
-		fmt.Fprintln(os.Stderr, "Using config file:", viper.ConfigFileUsed())
+		if viper.GetBool("logging.verbose") {
+			fmt.Fprintln(os.Stderr, "Using config file:", viper.ConfigFileUsed())
+		}
 	}
 }

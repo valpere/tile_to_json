@@ -1,3 +1,4 @@
+// main.go - Application entry point
 /*
 Copyright © 2025 Valentyn Solomko <valentyn.solomko@gmail.com>
 
@@ -15,7 +16,7 @@ limitations under the License.
 */
 package main
 
-import "mvtpbf-to-geojson/cmd"
+import "github.com/valpere/tile_to_json/cmd"
 
 func main() {
 	cmd.Execute()
