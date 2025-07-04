@@ -10,30 +10,30 @@ import (
 
 // Job represents a batch processing job
 type Job struct {
-	ID          string             `json:"id"`
-	TileRanges  []*tile.TileRange  `json:"tile_ranges"`
-	Config      *JobConfig         `json:"config"`
-	Status      JobStatus          `json:"status"`
-	Progress    *JobProgress       `json:"progress"`
-	CreatedAt   time.Time          `json:"created_at"`
-	StartedAt   *time.Time         `json:"started_at,omitempty"`
-	CompletedAt *time.Time         `json:"completed_at,omitempty"`
-	Error       error              `json:"error,omitempty"`
+	ID          string            `json:"id"`
+	TileRanges  []*tile.TileRange `json:"tile_ranges"`
+	Config      *JobConfig        `json:"config"`
+	Status      JobStatus         `json:"status"`
+	Progress    *JobProgress      `json:"progress"`
+	CreatedAt   time.Time         `json:"created_at"`
+	StartedAt   *time.Time        `json:"started_at,omitempty"`
+	CompletedAt *time.Time        `json:"completed_at,omitempty"`
+	Error       error             `json:"error,omitempty"`
 }
 
 // JobConfig contains configuration for a batch processing job
 type JobConfig struct {
-	Concurrency    int           `json:"concurrency"`
-	ChunkSize      int           `json:"chunk_size"`
-	Timeout        time.Duration `json:"timeout"`
-	Resume         bool          `json:"resume"`
-	OutputPath     string        `json:"output_path"`
-	OutputFormat   string        `json:"output_format"`
-	FailOnError    bool          `json:"fail_on_error"`
-	RetryFailed    bool          `json:"retry_failed"`
-	MaxRetries     int           `json:"max_retries"`
-	MultiFile      bool          `json:"multi_file"`
-	Compression    bool          `json:"compression"`
+	Concurrency  int           `json:"concurrency"`
+	ChunkSize    int           `json:"chunk_size"`
+	Timeout      time.Duration `json:"timeout"`
+	Resume       bool          `json:"resume"`
+	OutputPath   string        `json:"output_path"`
+	OutputFormat string        `json:"output_format"`
+	FailOnError  bool          `json:"fail_on_error"`
+	RetryFailed  bool          `json:"retry_failed"`
+	MaxRetries   int           `json:"max_retries"`
+	MultiFile    bool          `json:"multi_file"`
+	Compression  bool          `json:"compression"`
 }
 
 // JobStatus represents the current status of a batch job
@@ -50,43 +50,43 @@ const (
 
 // JobProgress tracks the progress of a batch processing job
 type JobProgress struct {
-	TotalTiles     int64         `json:"total_tiles"`
-	ProcessedTiles int64         `json:"processed_tiles"`
-	FailedTiles    int64         `json:"failed_tiles"`
-	SuccessTiles   int64         `json:"success_tiles"`
-	CurrentChunk   int           `json:"current_chunk"`
-	TotalChunks    int           `json:"total_chunks"`
-	StartTime      time.Time     `json:"start_time"`
-	EstimatedEnd   *time.Time    `json:"estimated_end,omitempty"`
-	Throughput     float64       `json:"throughput"`
-	BytesWritten   int64         `json:"bytes_written"`
+	TotalTiles     int64      `json:"total_tiles"`
+	ProcessedTiles int64      `json:"processed_tiles"`
+	FailedTiles    int64      `json:"failed_tiles"`
+	SuccessTiles   int64      `json:"success_tiles"`
+	CurrentChunk   int        `json:"current_chunk"`
+	TotalChunks    int        `json:"total_chunks"`
+	StartTime      time.Time  `json:"start_time"`
+	EstimatedEnd   *time.Time `json:"estimated_end,omitempty"`
+	Throughput     float64    `json:"throughput"`
+	BytesWritten   int64      `json:"bytes_written"`
 }
 
 // WorkItem represents a single unit of work in a batch job
 type WorkItem struct {
-	Request   *tile.TileRequest `json:"request"`
-	ChunkID   int               `json:"chunk_id"`
-	ItemID    int               `json:"item_id"`
-	Retry     int               `json:"retry"`
-	Priority  int               `json:"priority"`
+	Request  *tile.TileRequest `json:"request"`
+	ChunkID  int               `json:"chunk_id"`
+	ItemID   int               `json:"item_id"`
+	Retry    int               `json:"retry"`
+	Priority int               `json:"priority"`
 }
 
 // WorkResult represents the result of processing a work item
 type WorkResult struct {
-	Item      *WorkItem           `json:"item"`
-	Tile      *tile.ProcessedTile `json:"tile,omitempty"`
-	Error     error               `json:"error,omitempty"`
-	Duration  time.Duration       `json:"duration"`
-	Attempts  int                 `json:"attempts"`
+	Item     *WorkItem           `json:"item"`
+	Tile     *tile.ProcessedTile `json:"tile,omitempty"`
+	Error    error               `json:"error,omitempty"`
+	Duration time.Duration       `json:"duration"`
+	Attempts int                 `json:"attempts"`
 }
 
 // ChunkResult represents the result of processing a chunk of work items
 type ChunkResult struct {
-	ChunkID      int            `json:"chunk_id"`
-	Results      []*WorkResult  `json:"results"`
-	Duration     time.Duration  `json:"duration"`
-	SuccessCount int            `json:"success_count"`
-	FailureCount int            `json:"failure_count"`
+	ChunkID      int           `json:"chunk_id"`
+	Results      []*WorkResult `json:"results"`
+	Duration     time.Duration `json:"duration"`
+	SuccessCount int           `json:"success_count"`
+	FailureCount int           `json:"failure_count"`
 }
 
 // Coordinator defines the interface for managing batch jobs

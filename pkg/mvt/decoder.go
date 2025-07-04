@@ -30,28 +30,28 @@ func NewDecoderWithExtent(extent int) *Decoder {
 
 // DecodedTile represents a decoded MVT tile with its layers and metadata
 type DecodedTile struct {
-	Layers   map[string]*DecodedLayer `json:"layers"`
-	Extent   int                      `json:"extent"`
-	Version  int                      `json:"version"`
-	TileID   TileID                   `json:"tile_id"`
+	Layers  map[string]*DecodedLayer `json:"layers"`
+	Extent  int                      `json:"extent"`
+	Version int                      `json:"version"`
+	TileID  TileID                   `json:"tile_id"`
 }
 
 // DecodedLayer represents a single layer within an MVT tile
 type DecodedLayer struct {
-	Name     string              `json:"name"`
-	Features []*DecodedFeature   `json:"features"`
-	Extent   int                 `json:"extent"`
-	Version  int                 `json:"version"`
-	Keys     []string            `json:"keys,omitempty"`
-	Values   []interface{}       `json:"values,omitempty"`
+	Name     string            `json:"name"`
+	Features []*DecodedFeature `json:"features"`
+	Extent   int               `json:"extent"`
+	Version  int               `json:"version"`
+	Keys     []string          `json:"keys,omitempty"`
+	Values   []interface{}     `json:"values,omitempty"`
 }
 
 // DecodedFeature represents a single feature within a layer
 type DecodedFeature struct {
-	ID         *uint64                `json:"id,omitempty"`
-	Tags       map[string]interface{} `json:"tags"`
-	Type       geojson.GeometryType   `json:"type"`
-	Geometry   orb.Geometry           `json:"geometry"`
+	ID       *uint64                `json:"id,omitempty"`
+	Tags     map[string]interface{} `json:"tags"`
+	Type     geojson.GeometryType   `json:"type"`
+	Geometry orb.Geometry           `json:"geometry"`
 }
 
 // TileID represents the tile coordinates and zoom level
@@ -166,7 +166,7 @@ func (d *Decoder) transformGeometry(geometry orb.Geometry, z, x, y int) orb.Geom
 	// Calculate the transformation parameters
 	n := float64(1 << uint(z))
 	tileSize := float64(d.extent)
-	
+
 	// Web Mercator bounds
 	const webMercatorMax = 20037508.342789244
 
@@ -174,15 +174,15 @@ func (d *Decoder) transformGeometry(geometry orb.Geometry, z, x, y int) orb.Geom
 		// Convert tile pixel coordinates to tile fractional coordinates
 		tileX := point[0] / tileSize
 		tileY := point[1] / tileSize
-		
+
 		// Convert to global tile coordinates
 		globalX := (float64(x) + tileX) / n
 		globalY := (float64(y) + tileY) / n
-		
+
 		// Convert to Web Mercator coordinates
-		mercatorX := (globalX * 2.0 - 1.0) * webMercatorMax
-		mercatorY := (1.0 - globalY * 2.0) * webMercatorMax
-		
+		mercatorX := (globalX*2.0 - 1.0) * webMercatorMax
+		mercatorY := (1.0 - globalY*2.0) * webMercatorMax
+
 		return orb.Point{mercatorX, mercatorY}
 	}
 

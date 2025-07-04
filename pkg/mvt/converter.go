@@ -17,11 +17,11 @@ type Converter struct {
 
 // ConversionOptions configures the conversion process
 type ConversionOptions struct {
-	IncludeMetadata bool     `json:"include_metadata"`
-	LayerFilter     []string `json:"layer_filter,omitempty"`
-	PropertyFilter  []string `json:"property_filter,omitempty"`
-	SimplifyGeometry bool    `json:"simplify_geometry"`
-	CoordinateSystem string  `json:"coordinate_system"` // "web-mercator" or "wgs84"
+	IncludeMetadata  bool     `json:"include_metadata"`
+	LayerFilter      []string `json:"layer_filter,omitempty"`
+	PropertyFilter   []string `json:"property_filter,omitempty"`
+	SimplifyGeometry bool     `json:"simplify_geometry"`
+	CoordinateSystem string   `json:"coordinate_system"` // "web-mercator" or "wgs84"
 }
 
 // ConversionMetadata contains metadata about the conversion process
@@ -129,7 +129,7 @@ func (c *Converter) convertFeatureToGeoJSON(feature *DecodedFeature, layerName s
 
 	// Set properties
 	properties := make(map[string]interface{})
-	
+
 	// Copy feature tags to properties
 	for key, value := range feature.Tags {
 		// Apply property filter if specified
@@ -150,7 +150,7 @@ func (c *Converter) convertFeatureToGeoJSON(feature *DecodedFeature, layerName s
 // transformToWGS84 converts Web Mercator coordinates to WGS84 (longitude/latitude)
 func (c *Converter) transformToWGS84(featureCollection *geojson.FeatureCollection) {
 	const webMercatorMax = 20037508.342789244
-	
+
 	for _, feature := range featureCollection.Features {
 		if feature.Geometry != nil {
 			feature.Geometry = c.transformGeometryToWGS84(feature.Geometry)
@@ -163,7 +163,7 @@ func (c *Converter) transformGeometryToWGS84(geometry interface{}) interface{} {
 	// This is a simplified transformation - in production, you might want to use
 	// a proper projection library like proj4 for more accurate transformations
 	const webMercatorMax = 20037508.342789244
-	
+
 	switch geom := geometry.(type) {
 	case map[string]interface{}:
 		if geomType, ok := geom["type"].(string); ok {
@@ -173,7 +173,7 @@ func (c *Converter) transformGeometryToWGS84(geometry interface{}) interface{} {
 					if x, ok := coords[0].(float64); ok {
 						if y, ok := coords[1].(float64); ok {
 							lon := (x / webMercatorMax) * 180.0
-							lat := (2.0 * (Math.Atan(Math.Exp((y / webMercatorMax) * Math.Pi)) - Math.Pi / 4.0)) * 180.0 / Math.Pi
+							lat := (2.0 * (Math.Atan(Math.Exp((y/webMercatorMax)*Math.Pi)) - Math.Pi/4.0)) * 180.0 / Math.Pi
 							geom["coordinates"] = []float64{lon, lat}
 						}
 					}
@@ -205,21 +205,21 @@ func (c *Converter) transformGeometryToWGS84(geometry interface{}) interface{} {
 			}
 		}
 	}
-	
+
 	return geometry
 }
 
 // transformCoordinateArray transforms an array of coordinates
 func (c *Converter) transformCoordinateArray(coords []interface{}) []interface{} {
 	const webMercatorMax = 20037508.342789244
-	
+
 	result := make([]interface{}, len(coords))
 	for i, coord := range coords {
 		if coordArray, ok := coord.([]interface{}); ok && len(coordArray) == 2 {
 			if x, ok := coordArray[0].(float64); ok {
 				if y, ok := coordArray[1].(float64); ok {
 					lon := (x / webMercatorMax) * 180.0
-					lat := (2.0 * (math.Atan(math.Exp((y / webMercatorMax) * math.Pi)) - math.Pi / 4.0)) * 180.0 / math.Pi
+					lat := (2.0 * (math.Atan(math.Exp((y/webMercatorMax)*math.Pi)) - math.Pi/4.0)) * 180.0 / math.Pi
 					result[i] = []float64{lon, lat}
 					continue
 				}
@@ -253,7 +253,7 @@ func (c *Converter) ConvertToGeoJSONString(data []byte, z, x, y int, pretty bool
 	} else {
 		jsonData, err = json.Marshal(result)
 	}
-	
+
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal GeoJSON: %w", err)
 	}
