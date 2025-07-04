@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/valpere/tile_to_json/internal"
+	"github.com/valpere/tile_to_json/internal/tile"
 )
 
 // DefaultCoordinator implements the Coordinator interface

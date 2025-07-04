@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/valpere/tile_to_json/internal"
 )
 
 // Validate validates the configuration structure and values
@@ -215,11 +217,11 @@ func validateSourceCombination(config *Config) error {
 	sourceType := config.DetermineSourceType()
 
 	switch sourceType {
-	case "http":
+	case internal.SourceTypeHTTP:
 		if config.Server.BaseURL == "" {
 			return fmt.Errorf("base_url is required for HTTP source type")
 		}
-	case "local":
+	case internal.SourceTypeLocal:
 		if config.Local.BasePath == "" {
 			return fmt.Errorf("base_path is required for local source type")
 		}
@@ -238,7 +240,7 @@ func validateSourceCombination(config *Config) error {
 
 // validateLocalTileExists checks if a specific local tile file exists
 func ValidateLocalTileExists(config *Config, z, x, y int) error {
-	if config.DetermineSourceType() != "local" {
+	if config.DetermineSourceType() != internal.SourceTypeLocal {
 		return nil // Skip validation for non-local sources
 	}
 
@@ -259,7 +261,7 @@ func ValidateLocalTileExists(config *Config, z, x, y int) error {
 
 // ValidateLocalTileDirectory checks if the local tile directory structure is valid
 func ValidateLocalTileDirectory(config *Config) error {
-	if config.DetermineSourceType() != "local" {
+	if config.DetermineSourceType() != internal.SourceTypeLocal {
 		return nil // Skip validation for non-local sources
 	}
 
@@ -286,59 +288,70 @@ func ValidateLocalTileDirectory(config *Config) error {
 	return nil
 }
 
-// contains checks if a string slice contains a specific string (case-insensitive)
-func contains(slice []string, item string) bool {
-	for _, s := range slice {
-		if strings.EqualFold(s, item) {
-			return true
-		}
-	}
-	return false
-}
-}
-
-// validateNetwork validates network configuration parameters
-func validateNetwork(config *NetworkConfig) error {
-	if config.ProxyURL != "" {
-		if _, err := url.Parse(config.ProxyURL); err != nil {
-			return fmt.Errorf("invalid proxy_url: %w", err)
-		}
+// ValidateCoordinates validates tile coordinates for basic bounds checking
+func ValidateCoordinates(z, x, y int) error {
+	if z < 0 || z > 22 {
+		return fmt.Errorf("invalid zoom level %d: must be between 0 and 22", z)
 	}
 
-	if config.MaxIdleConns < 0 {
-		return fmt.Errorf("max_idle_conns must be non-negative")
+	maxTile := 1 << uint(z)
+	if x < 0 || x >= maxTile {
+		return fmt.Errorf("invalid x coordinate %d for zoom %d: must be between 0 and %d", x, z, maxTile-1)
 	}
 
-	if config.UserAgent == "" {
-		return fmt.Errorf("user_agent cannot be empty")
-	}
-
-	if config.KeepAlive < 0 {
-		return fmt.Errorf("keep_alive must be non-negative")
-	}
-
-	if config.IdleConnTimeout < 0 {
-		return fmt.Errorf("idle_conn_timeout must be non-negative")
+	if y < 0 || y >= maxTile {
+		return fmt.Errorf("invalid y coordinate %d for zoom %d: must be between 0 and %d", y, z, maxTile-1)
 	}
 
 	return nil
 }
 
-// validateLogging validates logging configuration parameters
-func validateLogging(config *LoggingConfig) error {
-	validLevels := []string{"debug", "info", "warn", "error", "fatal", "panic"}
-	if !contains(validLevels, config.Level) {
-		return fmt.Errorf("invalid log level: %s, must be one of %v", config.Level, validLevels)
+// ValidateSourceTypeSupport checks if a source type is supported by configuration
+func ValidateSourceTypeSupport(config *Config, sourceType internal.SourceType) error {
+	switch sourceType {
+	case internal.SourceTypeHTTP:
+		if config.Server.BaseURL == "" {
+			return fmt.Errorf("HTTP source type requires base_url configuration")
+		}
+		if config.Server.URLTemplate == "" {
+			return fmt.Errorf("HTTP source type requires url_template configuration")
+		}
+	case internal.SourceTypeLocal:
+		if config.Local.BasePath == "" {
+			return fmt.Errorf("local source type requires base_path configuration")
+		}
+		if config.Local.PathTemplate == "" {
+			return fmt.Errorf("local source type requires path_template configuration")
+		}
+		return ValidateLocalTileDirectory(config)
+	default:
+		return fmt.Errorf("unsupported source type: %s", sourceType)
 	}
 
-	validFormats := []string{"text", "json"}
-	if !contains(validFormats, config.Format) {
-		return fmt.Errorf("invalid log format: %s, must be one of %v", config.Format, validFormats)
-	}
+	return nil
+}
 
-	validOutputs := []string{"stdout", "stderr", "file"}
-	if !contains(validOutputs, config.Output) {
-		return fmt.Errorf("invalid log output: %s, must be one of %v", config.Output, validOutputs)
+// ValidateOutputConfiguration ensures output configuration is compatible with operation mode
+func ValidateOutputConfiguration(config *Config, multiFile bool, outputPath string) error {
+	if multiFile {
+		// Multi-file mode requires directory output
+		if outputPath == "" || outputPath == "-" {
+			return fmt.Errorf("multi-file mode requires output directory specification")
+		}
+		
+		// Check if output directory can be created/accessed
+		if err := os.MkdirAll(outputPath, 0755); err != nil {
+			return fmt.Errorf("cannot create output directory %s: %w", outputPath, err)
+		}
+	} else {
+		// Single file mode validation
+		if outputPath != "" && outputPath != "-" {
+			// Check if output directory exists
+			outputDir := filepath.Dir(outputPath)
+			if err := os.MkdirAll(outputDir, 0755); err != nil {
+				return fmt.Errorf("cannot create output directory %s: %w", outputDir, err)
+			}
+		}
 	}
 
 	return nil
